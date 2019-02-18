@@ -1,0 +1,484 @@
+---
+title: "linear"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(lmtest)
+library(nortest)
+library(dplyr)
+library(e1071)
+library(ISLR)
+library(leaps)
+library(VIF)
+library(HH)
+library(clusterGeneration)
+library(MASS)
+library(fmsb)
+library(ggplot2)
+options(stringsAsFactors = FALSE)
+library(dplyr)
+library(readr)
+library(lubridate)
+library(purrr)
+library(ggplot2)
+library(stringr)
+library(data.table)
+library(randomForest)
+library(glmnet)
+library(pls)
+library(class)
+library(gam)
+library(akima)
+library(nnet)
+library(neuralnet)
+library(NeuralNetTools)
+library(ROCR)
+library(leaps)
+library(stats)
+library(MASS)
+library(qpcR)
+library(MPV)
+library(rgl)
+library(MuMIn)
+library(leaps)
+library(bestglm)
+library(qpcR)
+library(rgl)
+library(MuMIn)
+library(bestglm)
+library(forwards)
+library(subselect)
+library(FWDselect)
+```
+
+Data Cleaning
+missing values
+```{r}
+loan<-read.csv("/Users/anmoe/Desktop/loan.csv", header=T)
+dim(loan)
+loan=na.omit(loan)
+dim(loan)
+```
+emp_length as.numeric
+```{r}
+loan<-subset(loan, loan$emp_length!="n/a")
+loan[which(loan$emp_length=='< 1 year'),]$emp_length<-0
+loan[which(loan$emp_length=='1 year'),]$emp_length<-1
+loan[which(loan$emp_length=='2 years'),]$emp_length<-2
+loan[which(loan$emp_length=='3 years'),]$emp_length<-3
+loan[which(loan$emp_length=='4 years'),]$emp_length<-4
+loan[which(loan$emp_length=='5 years'),]$emp_length<-5
+loan[which(loan$emp_length=='6 years'),]$emp_length<-6
+loan[which(loan$emp_length=='7 years'),]$emp_length<-7
+loan[which(loan$emp_length=='8 years'),]$emp_length<-8
+loan[which(loan$emp_length=='9 years'),]$emp_length<-9
+loan[which(loan$emp_length=='10+ years'),]$emp_length<-10
+table(loan$emp_length)
+loan$emp_length<-as.numeric(loan$emp_length)
+```
+fully paid:0     charged off:1
+```{r}
+a<-which(loan$loan_status=="Does not meet the credit policy. Status:Charged Off")
+loan[a,]$loan_status<-c("Charged Off")
+b<-which(loan$loan_status=="Does not meet the credit policy. Status:Fully Paid")
+loan[b,]$loan_status<-c("Fully Paid")
+levels(loan$loan_status) <- c(0,1)
+loan$loan_status<-ifelse(loan$loan_status=="Fully Paid", 0, 1)
+table(loan$loan_status)
+loan$loan_status<-factor(loan$loan_status)
+```
+purpose: small_business:1   not small_business:0
+```{r}
+loan[which(loan$purpose!='small_business'),]$purpose<-0
+loan[which(loan$purpose=='small_business'),]$purpose<-1
+loan$purpose<-factor(loan$purpose)
+```
+
+```{r}
+loan$grade<-factor(loan$grade)
+loan$sub_grade<-factor(loan$sub_grade)
+loan$home_ownership<-factor(loan$home_ownership)
+loan$verification_status<-factor(loan$verification_status)
+loan$purpose<-factor(loan$purpose)
+loan$addr_state<-factor(loan$addr_state)
+loan$debt_settlement_flag<-factor(loan$debt_settlement_flag)
+#recoveries+total_rec_prncp+total_rec_int+total_rec_late_fee=total_pymnt
+loan$total_rec_prncp<-NULL
+loan$total_rec_int<-NULL
+loan$total_rec_late_fee<-NULL
+loan$recoveries<-NULL
+#unknown until due day
+loan$total_pymnt_inv<-NULL
+#too much
+loan$sub_grade<-NULL
+```
+loan: split badloan data into train data and test data
+```{r}
+set.seed(123)
+loan.train = sample_frac(loan, 0.9)
+sid<-as.numeric(rownames(loan.train))
+loan.test<-loan[-sid,]
+#badloan
+dim(loan.train)
+table(loan.train$loan_status)
+dim(loan.test)
+table(loan.test$loan_status)
+```
+badloan
+```{r}
+a<-which(loan.train$loan_status=="1")
+badloan.train<-loan.train[a,]
+b<-which(loan.test$loan_status=="1")
+badloan.test<-loan.test[b,]
+#write.csv(badloan,filee="/Users/anmoe/Desktop/badloan.csv")
+badloan.train$loan_status<-NULL
+dim(badloan.train)
+```
+regression reponse: total_pymnt
+vif
+```{r}
+badloan.lm<-lm(total_pymnt~.,data=badloan.train)
+vif<-vif(badloan.lm)
+which.max(vif)
+```
+
+badloan regression: remove 4 predictors based on vif values (multicollinearity)
+```{r}
+badloan.train$funded_amnt<-NULL
+badloan.train$addr_state<-NULL
+badloan.train$loan_amnt<-NULL
+badloan.train$grade<-NULL
+#gradeE vif: 11.789794
+```
+regression: Forward Stepwise Selection: Choose 10 predictors
+```{r}
+badloan.fwd=regsubsets(badloan.train$total_pymnt~.,data=badloan.train,nvmax=51,method="forward")
+reg.summary=summary(badloan.fwd)
+par(mfrow=c(2,2))
+plot(reg.summary$rss,xlab="Number of Variables",ylab="RSS",type="l")
+plot(reg.summary$adjr2,xlab="Number of Variables",ylab="Adjusted RSq",type="l")
+which.max(reg.summary$adjr2)
+points(19,reg.summary$adjr2[19], col="red",cex=2,pch=20)
+plot(reg.summary$cp,xlab="Number of Variables",ylab="Cp",type='l')
+which.min(reg.summary$cp)
+points(17,reg.summary$cp[17],col="red",cex=2,pch=20)
+plot(reg.summary$bic,xlab="Number of Variables",ylab="BIC",type='l')
+which.min(reg.summary$bic)
+points(8,reg.summary$bic[8],col="red",cex=2,pch=20)
+names(coef(badloan.fwd,8))
+#[1] "(Intercept)"             "funded_amnt_inv"        
+#[3] "term"                    "installment"            
+#[5] "annual_inc"              "purposes1"  
+#[7] "inq_last_6mths"          "collection_recovery_fee"
+#[9] "debt_settlement_flagY"  
+```
+regression: selected data.trainn
+```{r}
+baddata<-cbind(badloan.train$total_pymnt,badloan.train$funded_amnt_inv,badloan.train$term,badloan.train$installment,badloan.train$annual_inc,badloan.train$purpose,badloan.train$inq_last_6mths,badloan.train$collection_recovery_fee,badloan.train$debt_settlement_flag)
+colnames(baddata)<-c("y","funded_amnt_inv","term","installment","annual_inc","purpose","inq_last_6mths","collection_recovery_fee","debt_settlement_flag")  
+baddata<-data.frame(baddata)
+
+baddata.test<-cbind(badloan.test$total_pymnt,badloan.test$funded_amnt_inv,badloan.test$term,badloan.test$installment,badloan.test$annual_inc,badloan.test$purpose,badloan.test$inq_last_6mths,badloan.test$collection_recovery_fee,badloan.test$debt_settlement_flag)
+colnames(baddata.test)<-c("y","funded_amnt_inv","term","installment","annual_inc","purpose","inq_last_6mths","collection_recovery_fee","debt_settlement_flag")  
+baddata.test<-data.frame(baddata.test)
+```
+
+```{r}
+#cor(baddata)
+m0.lm<-lm(y~.,data=baddata)
+summary(m0.lm)
+lillie.test(m0.lm$residuals)
+bptest(m0.lm, studentize = FALSE)
+```
+linear regression model for badloan.trainn
+```{r}
+m1.lm<-lm(y^(0.5)~.,data=baddata)
+summary(m1.lm)$adj.r.squared
+
+plot(m1.lm)
+#0.5 normality  p-value: 0.03931  Adjusted R-squared:  0.5338
+lillie.test(m1.lm$residuals)
+bptest(m1.lm, studentize = FALSE)
+#p-value: <2.2e-16
+sum((m1.lm$fitted.values-sqrt(baddata$y))^2)/5543
+```
+
+weighted least regression w1<-1/y
+```{r}
+m1.lm<-lm(y^(0.5)~.,data=baddata)
+w1<-1/m1.lm$fit
+m2.lm<-lm(y^(0.5)~.,data=baddata, weights =w1)
+summary(m2.lm) #Adjusted R-squared:  0.5365
+anova(m2.lm) #MSE=8
+plot(m2.lm)
+lillie.test(m2.lm$residuals) #p-value = 6.14e-05
+bptest(m2.lm, studentize = FALSE) #p-value < 2.2e-16
+#curvlinear  quadr   log 
+sum((m2.lm$fitted.values-sqrt(baddata$y))^2)/5543
+pred=predict(m2.lm,newdata=baddata.test,se=F)
+sum((pred-sqrt(baddata.test$y))^2)/(767-8)
+
+```
+
+weighted least regression w1<-1/res^2
+```{r}
+m1.lm<-lm(y^(0.5)~.,data=baddata)
+w2<-1/(m1.lm$residuals^2)
+m3.lm<-lm(y^(0.5)~.,data=baddata, weights =w2)
+summary(m3.lm) #Adjusted R-squared:  0.9992
+anova(m3.lm) #MSE=1
+plot(m3.lm)
+qqnorm(m3.lm$residuals)
+lillie.test(m3.lm$residuals) #p-value = 0.03527
+bptest(m3.lm, studentize = FALSE) #p-value < 2.2e-16
+plot(baddata$y^(0.5))
+#not include binary, see residuals 
+#send email R squared 
+#1/var   1/residual^2
+sum((m3.lm$fitted.values-sqrt(baddata$y))^2)/5543
+pred=predict(m3.lm,newdata=baddata.test,se=F)
+sum((pred-sqrt(baddata.test$y))^2)/(767-8)
+```
+
+weighted least regression w1<-1/res^2   delete binary 
+```{r}
+m1.lm<-lm(y^(0.5)~baddata$funded_amnt_inv+baddata$installment+baddata$annual_inc+baddata$inq_last_6mths+baddata$collection_recovery_fee,data=baddata)
+w2<-1/(m1.lm$residuals^2)
+m3.lm<-lm(y^(0.5)~.,data=baddata, weights =w2)
+summary(m3.lm) #Adjusted R-squared:  1
+anova(m3.lm) #MSE=1
+hist(m3.lm$residuals)
+plot(m3.lm)
+lillie.test(m3.lm$residuals) #p-value < 2.2e-16
+bptest(m3.lm, studentize = FALSE) #p-value < 2.2e-16
+plot(baddata$y^(0.5))
+#not include binary, see residuals 
+#send email R squared 
+#1/var   1/residual^2
+
+```
+
+
+
+weighted least regression w1<-1/...
+```{r}
+m1.lm<-lm(y^(0.5)~.,data=baddata)
+w3<-1/fitted(lm(abs(residuals(m1.lm)) ~ fitted(m1.lm)))^2
+m4.lm<-lm(y^(0.5)~.,data=baddata, weights =w3)
+summary(m4.lm) #Adjusted R-squared:  0.5289
+anova(m4.lm) #MSE=1.5
+plot(m4.lm)
+lillie.test(m4.lm$residuals) #p-value = 7.692e-07
+bptest(m4.lm, studentize = FALSE) #p-value < 2.2e-16
+sum((m4.lm$fitted.values-sqrt(baddata$y))^2)/5543
+pred=predict(m4.lm,newdata=baddata.test,se=F)
+sum((pred-sqrt(baddata.test$y))^2)/(767-8)
+```
+
+weighted least regression w1<-1/abs(res)
+```{r}
+m1.lm<-lm(y^(0.5)~.,data=baddata)
+w4<-1/abs(m1.lm$residuals)
+m5.lm<-lm(y^(0.5)~.,data=baddata, weights =w4)
+summary(m5.lm) #Adjusted R-squared:  0.8894
+anova(m5.lm) #MSE=20
+plot(m5.lm)
+lillie.test(m5.lm$residuals) #p-value = 0.02514
+bptest(m5.lm, studentize = FALSE) #p-value < 2.2e-16
+sum((m5.lm$fitted.values-sqrt(baddata$y))^2)/5543
+pred=predict(m5.lm,newdata=baddata.test,se=F)
+sum((pred-sqrt(baddata.test$y))^2)/(767-8)
+```
+weighted least regression w1<-1/abs(res)
+```{r}
+m1.lm<-lm(y^(0.5)~.,data=baddata)
+#externally studentized residuals
+esr=studres(m2.lm)
+w5<-1/abs(esr) #r^2:0.6947  normal p-val:0.011 non-constant p-val< 2.2e-16
+m6.lm<-lm(y^(0.5)~.,data=baddata, weights =w5)
+summary(m6.lm) #Adjusted R-squared:  0.9294
+anova(m6.lm) #MSE=492
+plot(m6.lm)
+lillie.test(m6.lm$residuals) #p-value = 7.692e-07
+bptest(m6.lm, studentize = FALSE) #p-value < 2.2e-16
+sum((m6.lm$fitted.values-sqrt(baddata$y))^2)/5543
+pred=predict(m6.lm,newdata=baddata.test,se=F)
+sum((pred-sqrt(baddata.test$y))^2)/(767-8)
+```
+weighted least regression w1<-1/abs(weighted raw res)
+```{r}
+m1.lm<-lm(y^(0.5)~.,data=baddata)
+#weighted raw residuals 
+wres=weighted.residuals(m2.lm)
+w6<-1/abs(wres) 
+#weighted raw residuals 
+m7.lm<-lm(y^(0.5)~.,data=baddata, weights =w6)
+summary(m7.lm) #Adjusted R-squared:  0.9294
+anova(m7.lm) #MSE=176
+plot(m7.lm)
+lillie.test(m7.lm$residuals) #p-value = 5.782e-05
+bptest(m7.lm, studentize = FALSE) #p-value < 2.2e-16
+#MSE
+sum((m7.lm$fitted.values-sqrt(baddata$y))^2)/5543
+pred=predict(m7.lm,newdata=baddata.test,se=F)
+sum((pred-sqrt(baddata.test$y))^2)/(767-8)
+```
+robust regression psi=psi.bisquare
+```{r}
+m8.lm<-rlm(y^(0.5)~.,data=baddata, psi=psi.bisquare)
+summary(m8.lm) #Residual standard error: 24.37 
+#MSE=630.8849
+anova(m8.lm)
+n=5552
+plot(baddata$y^(0.5)~fitted(m3.lm))
+abline(0,1, col='red')
+lillie.test(m8.lm$residuals) #p-value = 0.0003873
+bptest(m8.lm, studentize = FALSE) #p-value < 2.2e-16
+sum((m8.lm$fitted.values-sqrt(baddata$y))^2)/5543
+pred=predict(m8.lm,newdata=baddata.test,se=F)
+sum((pred-sqrt(baddata.test$y))^2)/(767-8)
+
+```
+robust regression psi=psi.hampel
+```{r}
+m9.lm<-rlm(y^(0.5)~.,data=baddata, psi=psi.hampel)
+summary(m9.lm) #Residual standard error: 24.37 
+#MSE=628.3365
+anova(m9.lm)
+n=5552
+plot(baddata$y^(0.5)~fitted(m3.lm))
+abline(0,1, col='red')
+lillie.test(m9.lm$residuals) #p-value = 0.008273
+bptest(m9.lm, studentize = FALSE) #p-value < 2.2e-16
+pred=predict(m9.lm,newdata=baddata.test,se=F)
+sum((pred-sqrt(baddata.test$y))^2)/(767-8)
+```
+robust regression psi=psi.huber
+```{r}
+m10.lm<-rlm(y^(0.5)~.,data=baddata, psi=psi.huber)
+summary(m10.lm) #Residual standard error: 24.37 
+#MSE=629.5456
+anova(m10.lm)
+n=5552
+plot(baddata$y^(0.5)~fitted(m10.lm))
+abline(0,1, col='red')
+lillie.test(m10.lm$residuals) #p-value = 0.001817
+bptest(m10.lm, studentize = FALSE) #p-value < 2.2e-16
+pred=predict(m10.lm,newdata=baddata.test,se=F)
+sum((pred-sqrt(baddata.test$y))^2)/(767-8)
+```
+delete influtial cases   NO NEED
+```{r}
+m1.lm<-lm(y^(0.5)~.,data=baddata)
+#5552 observations in baddata
+im<-influence.measures(m1.lm)
+im$is.inf[1,]==F
+baddata_influential_obs <- which(apply(im$is.inf, 1, any)) 
+baddata_delete_influential_obs <- baddata[-baddata_influential_obs,]
+#5011 observations in baddata
+m11.lm<-lm(y^(0.5)~.,data=baddata_delete_influential_obs)
+summary(m11.lm)
+plot(m11.lm)
+#0.5 normality  p-value: 0.0002574  Adjusted R-squared:  0.5759
+lillie.test(m11.lm$residuals)
+bptest(m11.lm, studentize = FALSE)
+summary(m1.lm)
+lillie.test(m1.lm$residuals)
+bptest(m1.lm, studentize = FALSE)
+```
+delete influtial cases   NO NEED
+```{r}
+m1.lm<-lm(y^(0.5)~installment+collection_recovery_fee+funded_amnt_inv:term+funded_amnt_inv:installment+funded_amnt_inv:purpose+funded_amnt_inv:inq_last_6mths+funded_amnt_inv:debt_settlement_flag+term:installment+term:annual_inc+term:collection_recovery_fee+installment:debt_settlement_flag+collection_recovery_fee:debt_settlement_flag,data=baddata)
+#5552 observations in baddata
+im<-influence.measures(m1.lm)
+im$is.inf[1,]==F
+baddata_influential_obs <- which(apply(im$is.inf, 1, any)) 
+baddata_delete_influential_obs <- baddata[-baddata_influential_obs,]
+#4995 observations in baddata
+m11.lm<-lm(y^(0.5)~installment+collection_recovery_fee+funded_amnt_inv:term+funded_amnt_inv:installment+funded_amnt_inv:purpose+funded_amnt_inv:inq_last_6mths+funded_amnt_inv:debt_settlement_flag+term:installment+term:annual_inc+term:collection_recovery_fee+installment:debt_settlement_flag+collection_recovery_fee:debt_settlement_flag,data=baddata_delete_influential_obs)
+summary(m11.lm)
+plot(m11.lm)
+#0.5 normality  p-value: 0.0002574  Adjusted R-squared:  0.5759
+lillie.test(m11.lm$residuals)
+bptest(m11.lm, studentize = FALSE)
+summary(m1.lm)
+lillie.test(m1.lm$residuals)
+bptest(m1.lm, studentize = FALSE)
+qchisq(0.95,12)
+```
+(interaction, higher order) subset selection for baddata
+```{r}
+baddata.fwd=regsubsets(y^(0.5)~funded_amnt_inv+term+installment+annual_inc+purpose+inq_last_6mths+collection_recovery_fee+debt_settlement_flag
++funded_amnt_inv^2+term^2+installment^2+annual_inc^2+inq_last_6mths^2+collection_recovery_fee^2 +funded_amnt_inv*term+funded_amnt_inv*installment+funded_amnt_inv*annual_inc+funded_amnt_inv*purpose+funded_amnt_inv*inq_last_6mths+funded_amnt_inv*collection_recovery_fee+funded_amnt_inv*debt_settlement_flag+term*installment  +term*annual_inc+term*purpose +term*inq_last_6mths+term*collection_recovery_fee  +term*debt_settlement_flag+installment*annual_inc+installment*purpose  +installment*inq_last_6mths+installment*collection_recovery_fee +installment*debt_settlement_flag+annual_inc*purpose+annual_inc*inq_last_6mths +annual_inc*collection_recovery_fee+annual_inc*debt_settlement_flag+purpose*inq_last_6mths+purpose*collection_recovery_fee +purpose*debt_settlement_flag+inq_last_6mths*collection_recovery_fee+  inq_last_6mths*debt_settlement_flag+collection_recovery_fee* debt_settlement_flag,data=baddata,nvmax=51,method="forward")
+reg.summary=summary(baddata.fwd)
+plot(reg.summary$bic,xlab="Number of Variables",ylab="BIC",type='l')
+points(12,reg.summary$bic[12],col="red",cex=2,pch=20)
+which.min(reg.summary$bic)
+names(coef(baddata.fwd,12))
+#[1] "(Intercept)"                                 
+# [2] "installment"                                 
+# [3] "collection_recovery_fee"                     
+# [4] "funded_amnt_inv:term"                        
+# [5] "funded_amnt_inv:installment"                 
+# [6] "funded_amnt_inv:purpose"                     
+# [7] "funded_amnt_inv:inq_last_6mths"              
+# [8] "funded_amnt_inv:debt_settlement_flag"        
+# [9] "term:installment"                            
+#[10] "term:annual_inc"                             
+#[11] "term:collection_recovery_fee"                
+#[12] "installment:debt_settlement_flag"            
+#[13] "collection_recovery_fee:debt_settlement_flag"
+```
+
+linear regression model for badloan.train sqrt(y)
+```{r}
+m2.lm<-lm(y^(0.5)~installment+collection_recovery_fee+funded_amnt_inv:term+funded_amnt_inv:installment+funded_amnt_inv:purpose+funded_amnt_inv:inq_last_6mths+funded_amnt_inv:debt_settlement_flag+term:installment+term:annual_inc+term:collection_recovery_fee+installment:debt_settlement_flag+collection_recovery_fee:debt_settlement_flag,data=baddata)
+summary(m2.lm)
+anova(m2.lm)
+#Adjusted R-squared:  0.5574
+lillie.test(m2.lm$residuals)
+#normality p-value: 0.001138
+```
+```{r}
+m2.lm<-lm(y^(0.5)~installment+collection_recovery_fee+funded_amnt_inv:term,data=baddata)
+anova(m2.lm)
+qf(0.95,1,5548)
+```
+delect insignificant term 
+```{r}
+m3.lm<-lm(y^(0.5)~installment+collection_recovery_fee+funded_amnt_inv:term+funded_amnt_inv:installment+funded_amnt_inv:purpose+funded_amnt_inv:inq_last_6mths+term:installment+term:annual_inc+term:collection_recovery_fee+installment:debt_settlement_flag+collection_recovery_fee:debt_settlement_flag,data=baddata)
+summary(m3.lm)
+#Adjusted R-squared:  0.5574
+lillie.test(m3.lm$residuals)
+#normality p-value: 0.0006279
+```
+
+
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+```{r}
+
+```
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
